@@ -46,93 +46,227 @@ class_diag <- function(score, truth, positive, cutoff=.5){
 
 # Mining, Classification, Prediction
 
-## Name and EID here
+## Louise Mendoza, lam5836
 
 ### Introduction 
 
-Paragraph or two introducing your datasets and variables, why they are interesting to you, etc. See instructions for more information
+The dataset I selected is called "VA" and is a dataset that is based off a Veteran's Lung Cancer Trial done by Kabfleisch and Prentice. The variables of this dataset are: 'stime' (survival time in days since treatment), 'status' (the status of a patient as dead (1) or alive (0)), 'treat' (type of lung cancer treatment where (1) is standard and (2) is the test drug), 'age' (patient's age in years), 'Karn' (Karnofsky score of patient's performance on a scale of 0 to 100), 'diag.time' (time since diagnosis in months), 'cell' (one of the four cell types where (1) is squamous, (2) is small cell, (3) is adeno, and (4) is large), and 'prior' (prior therapy where (0) is none and (10) is yes). I found the data in the MASS package. There are 137 observations with 8 variables. For my binary variable, 'treat', there are 69 observations that received standard treatment (1) and 68 observations that received the test-drug (2). 
 
 ```{R}
 library(tidyverse)
-# read your datasets in here, e.g., with read_csv()
-
-# if your dataset needs tidying, do so here
-
-# any other code here
+library(dplyr)
+VA <- MASS::VA
+VA %>% group_by(treat) %>% summarize(n=n())
 ```
 
 ### Cluster Analysis
 
 ```{R}
 library(cluster)
-# clustering code here
+library(ggplot2)
+library(GGally)
+sil_width <- vector()
+for (i in 2:10){
+  kms <- kmeans(VA, centers=i)
+  sil <- silhouette(kms$cluster, dist(VA))
+  sil_width[i] <- mean(sil[,3])
+}
+ggplot()+geom_line(aes(x=1:10,y=sil_width))+scale_x_continuous(name="k", breaks=1:10)
+
+set.seed(137)
+pam1 <- VA %>% pam(k=2)
+pam1
+plot(pam1, which=2)
+pamclust <- VA %>% mutate(cluster=as.factor(pam1$clustering))
+
+ggpairs(pamclust, columns=1:8, aes(color=cluster))
 ```
 
-Discussion of clustering here
+The results of the clustering show that 'stime', which is the survival time in days since the treatment has the highest correlation with the patient's Karnofsky score and that the correlation is 0.382. The number of clusters was decided when the silhouette width was computed in k-means and showed that 2 clusters would be the best option. When interpreting the average silhouette width and ultimately determining goodness-of-fit, we get 0.66, which means that a reasonable structure has been found. 
     
     
 ### Dimensionality Reduction with PCA
 
 ```{R}
-# PCA code here
+VA_nums <- VA %>% select_if(is.numeric) %>% scale()
+VA_pca <- princomp(VA_nums)
+names(VA_pca)
+summary(VA_pca, loadings = T)
+
+eigval <- VA_pca$sdev^2
+varprop=round(eigval/sum(eigval), 2)
+
+ggplot() + geom_bar(aes(y=varprop, x=1:5), stat="identity") + xlab("") + geom_path(aes(y=varprop, x=1:5)) + 
+  geom_text(aes(x=1:5, y=varprop, label=round(varprop, 2)), vjust=1, col="white", size=5) + 
+  scale_y_continuous(breaks=seq(0, .6, .2), labels = scales::percent) + 
+  scale_x_continuous(breaks=1:10)
+
+VA_df <- data.frame(Name=VA$stime, PC1=VA_pca$scores[, 1], PC2=VA_pca$scores[, 2])
+ggplot(VA_df, aes(PC1, PC2)) + geom_point()
+
 ```
 
-Discussions of PCA here. 
+Looking at the variance in each of the 5 numeric variables, the first PCA has the greatest variance of 0.3. When plotted onto a graph, there seems to be not a lot of relation between survival time and the PCA scores. 
 
 ###  Linear Classifier
 
 ```{R}
-# linear classifier code here
+stime_fit <- glm(status ~ stime, data=VA, family="binomial")
+stime_score <- predict(stime_fit, type="response")
+class_diag(stime_score, VA$status, positive=0)
+
+cell_fit <- glm(status ~ cell, data=VA, family="binomial")
+cell_score <- predict(cell_fit, type="response")
+class_diag(cell_score, VA$status, positive=0)
+
+age_fit <- glm(status ~ age, data=VA, family="binomial")
+age_score <- predict(age_fit, type="response")
+class_diag(age_score, VA$status, positive=0)
+
+Karn_fit <- glm(status ~ Karn, data=VA, family="binomial")
+Karn_score <- predict(Karn_fit, type="response")
+class_diag(Karn_score, VA$status, positive=0)
+
+diag_fit <- glm(status ~ diag.time, data=VA, family="binomial")
+diag_score <- predict(diag_fit, type="response")
+class_diag(diag_score, VA$status, positive=0)
+
+stime_fit2 <- glm(treat ~ stime, data=VA, family="binomial")
+stime_score2 <- predict(stime_fit2, type="response")
+class_diag(stime_score2, VA$treat, positive=2)
+
+stime_fit3 <- glm(prior ~ stime, data=VA, family="binomial")
+stime_score3 <- predict(stime_fit3, type="response")
+class_diag(stime_score3, VA$prior, positive=10)
+
+Karn_fit2 <- glm(treat ~ Karn, data=VA, family="binomial")
+Karn_score2 <- predict(Karn_fit2, type="response")
+class_diag(Karn_score2, VA$treat, positive=2)
+
+y <- VA$status
+y <- factor(y, levels=c("0", "1"))
+y_hat <- sample(c("0", "1"), size=length(y), replace=T)
+y_hat <- factor(y_hat, levels=c("0","1"))
+table(actual = y, predicted = y_hat)
+
+
+
 ```
 
 ```{R}
-# cross-validation of linear classifier here
+
+set.seed(1234)
+k=10
+VA <- VA%>%mutate(y=ifelse(status=="0",0,1))
+
+data <- VA[sample(nrow(VA)),]
+folds <- cut(seq(1:nrow(VA)), breaks=k, labels=F)
+
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,] 
+  test<-data[folds==i,]
+  truth<-test$y
+  
+  fit<-glm(y~stime,data=train,family="binomial")
+ 
+  probs<-predict(fit,newdata = test,type="response")
+  
+  diags <- rbind(diags, class_diag(probs, truth, positive=1))
+}
+
+summarize_all(diags, mean)
+
+
+fit <- glm(y~., data=VA, family="binomial")
+coef(fit)
+probs <- predict (fit, type="response")
+class_diag(probs, VA$y, positive=1) #wrong
 ```
 
-Discussion here
+I used a linear regression for linear classification and when comparing the patient's status and the survival time in days, got an AUC score of 0.6176. After running a cross validation of this same model, I got an AUC score of 0.5237. This noticeable decrease in the AUC scores show that there are signs of overfitting. When comparing patient status and cell type, I got an AUC score of 0.3702. When comparing patient status and age, I got an AUC score of 0.4028. When comparing patient status and Karnofsky score, I got an AUC score of 0.3212. When comparing patient status and months since diagnosis, I got an AUC score of 0.4544. When comparing type of treatment and survival time in days, I got an AUC score of 0.4535. When comparing prior therapy and survival time in days, I got an AUC score of 0.4832. When comparing type of treatment to Karnofsky score, I got an AUC score of 0.5157, which I found most interesting as it was the second highest score and showed how well the predictions were ranked. The confusion matrix showed 5 true negatives and 4 true positives. There were 68 false positives and 60 false negatives. 
+
 
 ### Non-Parametric Classifier
 
 ```{R}
 library(caret)
-# non-parametric classifier code here
+knn_fit <- knn3(factor(status==0, levels=c("TRUE","FALSE")) ~ Karn, data= VA, k=5)
+y_hat_knn <- predict(knn_fit, VA)
+
+table(truth=factor(VA$status==0, levels=c("TRUE", "FALSE")), prediction = factor(y_hat_knn[,1]>.5, levels=c("TRUE","FALSE")))
+
+class_diag(y_hat_knn[,1],VA$status, positive=0)
 ```
 
 ```{R}
-# cross-validation of np classifier here
+set.seed(1234)
+k=10 
+data<-VA[sample(nrow(VA)),] 
+folds<-cut(seq(1:nrow(VA)),breaks=k,labels=F) 
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,] 
+  test<-data[folds==i,]
+  truth<-test$y 
+  fit<-knn3(y~Karn,data=train)
+  probs<-predict(fit,newdata = test)[,2]
+  diags<-rbind(diags,class_diag(probs,truth, positive=0))
+}
+summarize_all(diags,mean)
 ```
 
-Discussion
+For the nonparametric classifier, I used k-nearest-neighbors using the same variables as the linear classifier (patient status for my binary variable and the patient Karnofsky score for my numeric variable). After running the kNN, I got an AUC of 0.7049. I ran a cross-validation of the same model and got an AUC of 0.4771, which is a noticeable decrease. This shows that there are signs of overfitting in this model. 
 
 
 ### Regression/Numeric Prediction
 
 ```{R}
-# regression model code here
+fit<-lm(Karn~., data=VA)
+yhat<-predict(fit)
+mean((VA$Karn-yhat)^2)
 ```
 
 ```{R}
-# cross-validation of regression model here
+set.seed(1234)
+k=5 #choose number of folds
+data<-VA[sample(nrow(VA)),] #randomly order rows
+folds<-cut(seq(1:nrow(VA)),breaks=k,labels=F) #create folds
+diags<-NULL
+for(i in 1:k){
+  train<-data[folds!=i,]
+  test<-data[folds==i,]
+  ## Fit linear regression model to training set
+  fit<-lm(Karn~.,data=train)
+  ## Get predictions/y-hats on test set (fold i)
+  yhat<-predict(fit,newdata=test)
+  ## Compute prediction error  (MSE) for fold i
+  diags<-mean((test$Karn-yhat)^2) 
+}
+mean(diags) #MSE higher in CV, not good (means overfitting)
 ```
+I ran a linear regression model to predict the Karnofsky score from all other variables in the dataset. Instead of classification diagnostics, I calculated the mean squared error (MSE) and this value was 309.0079. I then used cross-validation on the same model and calculated the average MSE and got the value of 410.2378. Therefore, since the value from the CV is higher, this model shows signs of overfitting.  
 
-Discussion
 
 ### Python 
 
 ```{R}
 library(reticulate)
+use_python("/usr/bin/python3", required = F)
+
+conc <- "In conclusion, the big main takeaways are that the Karnofsky score is"
 ```
 
 ```{python}
-# python code here
+conc = "somewhat related to whether the patient has gotten the standard or test drug."
+print(r.conc,conc)
 ```
 
-Discussion
+In these two code chunks, I was able to share pieces of a string on R and python and eventually join them together to complete the sentence. 
 
 ### Concluding Remarks
 
-Include concluding remarks here, if any
-
+I do not have any specific conclusions with this dataset but it was interesting to look at the relationship between survival of the patient with either the type of drug or prior therapy. For future analyses, I would like to specifically look at these variables. 
 
 
 
